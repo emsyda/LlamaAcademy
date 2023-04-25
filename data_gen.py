@@ -31,7 +31,7 @@ def post_process_response_ins(strategy, response, **kwargs):
         raw_instructions = f"{num_prompt_instructions+1}. Instruction:" + \
             response["text"]
         raw_instructions = re.split("###", raw_instructions)
-    elif strategy == "summarizing-gpt-3.5-turbo-generating-gpt-4":
+    elif strategy == "summarizing-gpt-3.5-turbo-generating-gpt-3.5-turbo":
         num_prompt_instructions = kwargs["num_prompt_instructions"]
         if "###" in response:
             raw_instructions = re.split("###", response)
@@ -113,7 +113,7 @@ def extract_code_output(response, model_name):
     :param model_name: a string, represents the model
     :return: a string containing the code output
     """
-    if model_name in ["gpt-3.5-turbo", "gpt-4"]:
+    if model_name in ["gpt-3.5-turbo"]: # "gpt-4"
         output = response["choices"][0]["message"]["content"]
     elif model_name == "EdgeGPT":
         output = response['item']["messages"][1]["text"]
@@ -244,7 +244,7 @@ def encode_prompt_instruct(url, strategy, batch_size=70, **kwargs):
         prompt += f"###\n{idx + 2}. Instruction:"
         prompt = prompt.format(url_docs=url, n_tasks=batch_size+len(kwargs["prompt_instructions"]))
 
-    elif strategy == "summarizing-gpt-3.5-turbo-generating-gpt-4":
+    elif strategy == "summarizing-gpt-3.5-turbo-generating-gpt-3.5-turbo":
         prompt = create_gpt_turbo_prompt(batch_size, **kwargs)
     else:
         raise ValueError("Unrecognised strategy provided.")
@@ -289,7 +289,7 @@ def truncate(encoding, prompt, max_size):
 def launch_instruction_generation(
     url_docs,
     seed_instructions_path="assets/seed_instructions.jsonl",
-    strategy="summarizing-gpt-3.5-turbo-generating-gpt-4",
+    strategy="summarizing-gpt-3.5-turbo-generating-gpt-3.5-turbo",
     num_instructions_to_generate=100,
     batch_size=70,
     temperature=0.7,
@@ -304,12 +304,12 @@ def launch_instruction_generation(
     if strategy == "reading-gpt-4":
         raise NotImplementedError("This method read the whole website to generate instructions, but not yet implemented")
     
-    if strategy == "summarizing-gpt-3.5-turbo-generating-gpt-4":
+    if strategy == "summarizing-gpt-3.5-turbo-generating-gpt-3.5-turbo":
         """This method is a combination of summarizing and generating instructions"""
-        logger.info("""You are using Summarizing mode with GPT-3.5 Turbo and Generating mode with GPT-4""")
+        logger.info("""You are using Summarizing mode with GPT-3.5 Turbo and Generating mode with GPT-3.5 Turbo""")
         logger.info("""Summarizing mode begins""")
         assert batch_size <= 80, "Batch size must be smaller than 80"
-        encoding_gpt4 = tiktoken.encoding_for_model("gpt-4")
+        encoding_gpt4 = tiktoken.encoding_for_model("gpt-3.5-turbo")
         encoding_gpt3 = tiktoken.encoding_for_model("gpt-3.5-turbo")
         seed_instructions = [json.loads(l)
                          for l in open(seed_instructions_path, "r")]
@@ -333,7 +333,7 @@ def launch_instruction_generation(
         embeddings = OpenAIEmbeddings()
         vectorstore = FAISS.from_documents(embed_docs, embeddings)
         
-        logger.info("Summary Vectorstore is storing in assets/vectorstore_summary.pkl")
+        logger.info("Summary FAISS vectorstore is stored in assets/vectorstore_summary.pkl")
         with open("assets/vectorstore_summary.pkl", "wb") as f:
             pickle.dump(vectorstore, f)
             
@@ -359,7 +359,7 @@ def launch_instruction_generation(
             while True:
                 try:
                     results = openai.ChatCompletion.create(
-                            model="gpt-4",
+                            model="gpt-3.5-turbo",
                             messages=[{"role": "user", "content": truncate(encoding_gpt4, prompt, 6000)}],
                             max_tokens=2000,
                             temperature=temperature
@@ -437,8 +437,8 @@ def launch_data_generation(
     documents_embeds,
     output_dir="assets/",
     num_tasks_to_generate=140,
-    strategy_instruct="summarizing-gpt-3.5-turbo-generating-gpt-4",
-    model_name_code="gpt-4",
+    strategy_instruct="summarizing-gpt-3.5-turbo-generating-gpt-3.5-turbo",
+    model_name_code="gpt-3.5-turbo",
     num_docs_to_output=1,
     use_scraped_docs=True,
     temperature=0.7,
@@ -457,6 +457,7 @@ def launch_data_generation(
         logger=logger,
         **kwargs
     )
+    os.makedirs(output_dir, exist_ok=True)
     # generated_instructions = []
     # with open(os.path.join(output_dir, "generated_instructions.jsonl"), "r") as f:
     #     for line in f:
@@ -485,7 +486,7 @@ def launch_data_generation(
             url_docs=url_docs,
             use_scraped_docs=use_scraped_docs
         )
-        if model_name_code in ["gpt-3.5-turbo", "gpt-4"]:
+        if model_name_code in ["gpt-3.5-turbo"]: # "gpt-4"
             max_retries = 10
             retries = 0
             exponential_base = 2
@@ -523,23 +524,26 @@ def unit_test():
     import logging
     from ingest_docs import ingest_docs
     logger = logging.getLogger(__name__)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler())
+    api_docs = "https://test-readthedocs-emsyda.readthedocs.io/en/latest/"
+    #api_docs = "https://python.langchain.com/en/latest/reference/installation.html"
     class Config:
         def __init__(self):
             self.DATA_PATH = "assets/"
             self.NUM_TASKS_TO_GENERATE = 100
-    docs, docs_for_summary = ingest_docs("https://developers.notion.com/reference", recursive_depth=1, logger=logger)
+    docs, docs_for_summary = ingest_docs(api_docs, recursive_depth=1, logger=logger)
     embeddings = OpenAIEmbeddings()
     vectorstore = FAISS.from_documents(docs, embeddings)
     with open("assets/vectorstore.pkl", "wb") as f:
         pickle.dump(vectorstore, f)
-    api_docs = "https://developers.notion.com/reference"
     cfg = Config()
     launch_data_generation(
         url_docs=api_docs,
         documents_embeds=vectorstore,
         output_dir=cfg.DATA_PATH,
         num_tasks_to_generate=cfg.NUM_TASKS_TO_GENERATE,
-        model_name="gpt-4",
+        model_name="gpt-3.5-turbo",
         logger=logger,
         num_prompt_instructions=3,
         documents_for_summary=docs_for_summary

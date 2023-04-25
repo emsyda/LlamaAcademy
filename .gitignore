@@ -6,3 +6,5 @@ assets/data.json
 assets/generated_instructions.jsonl
 assets/vectorstore.pkl
 assets/vectorstore_summary.pkl
+
+.env

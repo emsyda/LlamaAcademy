@@ -1,5 +1,7 @@
-GENERATE: False #Turn off if you don't want to generate the data
-API_DOCS: https://developers.notion.com/reference  
+GENERATE: True #Turn off if you don't want to generate the data
+#API_DOCS: https://developers.notion.com/reference
+#API_DOCS: https://pytorch.org/docs/stable/index.html
+API_DOCS: https://python.langchain.com/en/latest/
 DEPTH_CRAWLING: 1 #0 if your API website is long and not hierarchical for example like polygon.io. Otherwise, feel free to set, it might take much longer if your webiste has many children.
 SUMMARIZE_DOCS: True
 MICRO_BATCH_SIZE: 3 
@@ -11,7 +13,7 @@ CUTOFF_LEN: 2048
 LORA_R: 8
 LORA_ALPHA: 16
 LORA_DROPOUT: 0.05
-OPENAI_ENGINE: "gpt-4"
+OPENAI_ENGINE: "gpt-3.5-turbo"
 NUM_PROMPT_INSTRUCTIONS: 3
 NUM_TASKS_TO_GENERATE: 200 #recommended number of examples
 DATA_PATH: "assets/"

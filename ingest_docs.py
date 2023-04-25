@@ -7,7 +7,7 @@ from langchain.embeddings import OpenAIEmbeddings
 from langchain.text_splitter import TokenTextSplitter
 from langchain.vectorstores.faiss import FAISS
 from bs4 import BeautifulSoup
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 import requests
 from selenium import webdriver
 from selenium.webdriver.firefox.service import Service as FirefoxService
@@ -227,7 +227,25 @@ class APIReferenceLoader(WebBaseLoader):
     def clean_table_content(self, text):
         pass
 
-def hierarchy_links(url_docs: str, recursive_depth: int = 1, current_depth: int = 1) -> List[str]:
+def strip_index_html(a) -> str:
+    if a.path.rstrip('/').endswith('/index.html'):
+        return a.path.rstrip('/')[:-len('/index.html')]
+    return a.path.rstrip('/')
+
+def urls_match(a, b) -> bool:
+    return \
+        a.netloc == b.netloc and \
+        strip_index_html(a) == strip_index_html(b)  # "http//google.com/index.html" == "http://google.com" 
+
+def drop_duplicate_urls(links) -> List[str]:
+    unique = []
+    for url in links:
+        parsed = urlparse(url)
+        if not any(urls_match(x, parsed) for x in unique):
+            unique.append(parsed)
+    return [p.geturl() for p in unique]
+
+def hierarchy_links(url_docs: str, recursive_depth: int = 1, current_depth: int = 1, logger=None) -> List[str]:
     """
     Get all links from a web page up to a specified recursion depth.
 
@@ -236,12 +254,17 @@ def hierarchy_links(url_docs: str, recursive_depth: int = 1, current_depth: int 
     :param current_depth: an optional integer, the current recursion depth, defaults to 1
     :return: a List of strings, the URLs of documents collected from the web page
     """
-
+    if recursive_depth is None or recursive_depth < 0:
+        recursive_depth = None
+    if logger:
+        logger.debug("{} {} {}".format(url_docs, recursive_depth, current_depth))
     # Check if we have reached the maximum recursion depth
-    if current_depth > recursive_depth and recursive_depth != 0:
-        return []
+    if recursive_depth is None:
+        pass
     elif recursive_depth == 0:
         return [url_docs]
+    elif current_depth > recursive_depth:
+        return []
 
     # Send a GET request to the provided URL
     reqs = requests.get(url_docs)
@@ -249,19 +272,34 @@ def hierarchy_links(url_docs: str, recursive_depth: int = 1, current_depth: int 
     soup = BeautifulSoup(reqs.text, 'html.parser')
     # Initialize the list for collected document links
     docs_link = list()
+    _url = urlparse(url_docs)
+    _url_path = _url.path.strip('/')
+    _url_dir_path = _url_path if _url.path.endswith('/') else os.path.split(_url_path)[0]
+
     # Iterate over all the links in the web page
     for link in soup.find_all('a'):
+        #  urljoin("http://google.com/", "http://bbc.com") -> "http//bbc.com"
+        #  urljoin("http://google.com/", "/search?a=2")        -> "http//google.com/search?a=2"
+        #  urljoin("http://google.com/s/", "../search")    -> "http//google.com/search"
         # Create an absolute URL by joining the base URL and the href attribute
-        ref_link = urljoin(url_docs, link.get('href'))  
-        # Check if the URL is valid, not equal to the base URL, and not already in the list
-        if url_docs in ref_link and ref_link is not None and url_docs != ref_link:
+        ref_link = urljoin(url_docs, link.get('href'))
+        #print(ref_link)
+        _ref = urlparse(ref_link)
+        _ref_path = _ref.path.strip('/')
+
+        if (_ref.netloc == _url.netloc and _ref_path.startswith(_url_dir_path)  # New URL is an extension of the last one
+                and strip_index_html(_ref) != strip_index_html(_url)
+                and all(strip_index_html(_ref) != strip_index_html(urlparse(x)) for x in docs_link)): # not already added into this batch
+            #print('--- ', ref_link)
             docs_link.append(ref_link)
             # Recursively collect links if maximum depth is not yet reached
-            if current_depth < recursive_depth:
+            if recursive_depth is None or current_depth < recursive_depth:
                 docs_link.extend(
                     hierarchy_links(ref_link, recursive_depth, current_depth + 1)
                 )
     
+    if current_depth == 1:
+        return drop_duplicate_urls([url_docs] + docs_link)
     # Return the list of collected document links
     return docs_link
 
@@ -279,7 +317,8 @@ def ingest_docs(url_docs: str, recursive_depth: int = 1, return_summary: bool = 
     """
     embeddings = OpenAIEmbeddings()
     # Get links from the web page, up to the specified recursion depth
-    docs_link = set(hierarchy_links(url_docs, recursive_depth))
+    docs_link = set(hierarchy_links(url_docs, recursive_depth, logger=logger))
+    logger.info("Number of links {}".format(len(docs_link)))
     # Initialize the lists for collected documents and document summaries
     documents = list()
     docs_for_summary = list()
@@ -297,9 +336,11 @@ def ingest_docs(url_docs: str, recursive_depth: int = 1, return_summary: bool = 
         if return_summary:
             docs_for_summary.extend(text_splitter_sum.split_documents(raw_documents))
         documents.extend(text_splitter.split_documents(raw_documents))
-    logger.info("Number of documents: {}".format(len(documents)))
+    if logger:
+        logger.info("Number of documents: {}".format(len(documents)))
     
-    logger.info("Saving vectorstore into assets/vectorstore.pkl")
+    if logger:
+        logger.info("Creating the FAISS vectorstore")
     vectorstore = FAISS.from_documents(documents, embeddings)
     with open("assets/vectorstore.pkl", "wb") as f:
         pickle.dump(vectorstore, f)
@@ -309,7 +350,9 @@ def ingest_docs(url_docs: str, recursive_depth: int = 1, return_summary: bool = 
 if __name__ == "__main__":
     import logging
     logger = logging.getLogger(__name__)
-    docs, docs_for_summary = ingest_docs("https://developers.notion.com/reference/create-a-token", recursive_depth=0, logger=logger)
+    logger.setLevel(logging.DEBUG)
+    logger.addHandler(logging.StreamHandler())
+    docs, docs_for_summary = ingest_docs("https://python.langchain.com/en/latest/index.html", recursive_depth=0, logger=logger)
     embeddings = OpenAIEmbeddings()
     vectorstore = FAISS.from_documents(docs, embeddings)
     with open("assets/vectorstore_debug.pkl", "wb") as f:
